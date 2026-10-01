@@ -6,5 +6,4 @@ timm
 torch
 torchvision
 transformers
-gradio[oauth]
-spaces
+gradio

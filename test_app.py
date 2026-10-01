@@ -2,6 +2,7 @@ import pytest
 from local_model import aestoken2score
 from remote_model import parse_response
 from images import preview_upload
+from hf_auth import resolve_token
 
 
 def test_preview_upload_none():
@@ -18,6 +19,15 @@ def test_preview_upload_invalid_file():
     assert preview is None
     assert path is None
     assert "Could not read that image" in status
+
+
+def test_resolve_token_uses_visitor_token():
+    assert resolve_token("  hf_visitor_token  ") == "hf_visitor_token"
+
+
+@pytest.mark.parametrize("token", [None, "", "   "])
+def test_resolve_token_rejects_empty_values(token):
+    assert resolve_token(token) is None
 
 
 @pytest.mark.parametrize(

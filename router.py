@@ -16,7 +16,7 @@ def score_artwork(
     temperature,
     top_p,
     use_local_model,
-    hf_token: gr.OAuthToken | None,
+    hf_token,
 ):
     # Return (markdown, status) for the UI
     if not image_path:
@@ -24,18 +24,16 @@ def score_artwork(
 
     try:
         if use_local_model:
-            result = _local_with_fallback(image_path, aspect, temperature, top_p, hf_token)
+            result = _local_with_fallback(
+                image_path, aspect, temperature, top_p, hf_token
+            )
             return result.to_markdown(), result.to_status()
 
         token = resolve_token(hf_token)
         if not token:
-            gr.Warning(
-                "No Hugging Face credentials available. "
-                "Automatically switching to the local model."
+            raise gr.Error(
+                "Enter your Hugging Face token or select the local model."
             )
-            result = local_critique(image_path, aspect, temperature, top_p)
-            result.route = "Failover (no credentials)"
-            return result.to_markdown(), result.to_status()
 
         try:
             result = remote_critique(image_path, aspect, temperature, top_p, token)
@@ -54,7 +52,6 @@ def score_artwork(
         raise
     except Exception as error:
         raise gr.Error(f"The model could not score this image: {error}") from error
-
 
 
 def _local_with_fallback(image_path, aspect, temperature, top_p, hf_token) -> Critique:

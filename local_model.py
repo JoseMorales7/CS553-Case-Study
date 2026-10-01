@@ -1,6 +1,5 @@
 import logging
 import os
-import spaces
 import torch
 import torchvision.transforms as T
 from PIL import Image
@@ -95,7 +94,6 @@ def _ensure_loaded():
     return _model, _tokenizer
 
 
-@spaces.GPU(duration=120)
 def local_critique(image_path, aspect, temperature, top_p) -> Critique:
     model, tokenizer = _ensure_loaded()
     device, dtype = _device_and_dtype()
@@ -125,6 +123,6 @@ def local_critique(image_path, aspect, temperature, top_p) -> Critique:
     )
 
 
-# Ensure the model is loaded at boot time of Space, not on first request
-if os.environ.get("SPACE_ID"):
+# Optionally load the large local checkpoint at startup instead of on first use.
+if os.environ.get("PRELOAD_LOCAL_MODEL", "").lower() in {"1", "true", "yes"}:
     _ensure_loaded()

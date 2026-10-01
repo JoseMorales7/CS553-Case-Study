@@ -1,14 +1,14 @@
+import os
+
 import gradio as gr
 from config import LOCAL_MODEL, REMOTE_MODEL, ASPECTS
 from router import score_artwork # routing and failover
 from images import preview_upload
 
 
-def login_status(profile: gr.OAuthProfile | None):
-    if profile is None:
-        return ("Sign in with Hugging Face to use the hosted model on your own inference credits."
-                "The local model does not require a login.")
-    return (f"Signed in as **{profile.name}**. You can now use the hosted model.")
+SERVER_NAME = os.getenv("GRADIO_SERVER_NAME", "0.0.0.0")
+SERVER_PORT = int(os.getenv("GRADIO_SERVER_PORT", "8000"))
+
 
 def clear_workspace():
     return None, None, None, "Upload an image to begin.", "Your critique will appear here."
@@ -51,15 +51,22 @@ with gr.Blocks(title="Canvas Critic") as demo:
     image_path_state = gr.State()
 
     with gr.Sidebar(width=420):
-        gr.Markdown("### Hosted model access")
-        gr.LoginButton()
-        login_note = gr.Markdown(elem_id="model-note")
+        gr.Markdown("### Model access")
+        hf_token = gr.Textbox(
+            label="Hugging Face token",
+            type="password",
+            placeholder="hf_...",
+            info=(
+                "Used for your hosted inference requests. The app does not save "
+                "the token to disk."
+            ),
+        )
 
         gr.Markdown("### Scoring settings")
         use_local_model = gr.Checkbox(
             label="Switch to local model",
             value = False,
-            info = f"Runs {LOCAL_MODEL} in this Space instead of the hosted API."
+            info = f"Runs {LOCAL_MODEL} on this server instead of the hosted API."
         )
         aspect = gr.Dropdown(
             label="Aspect to evaluate",
@@ -127,6 +134,7 @@ with gr.Blocks(title="Canvas Critic") as demo:
             temperature,
             top_p,
             use_local_model,
+            hf_token,
         ],
         outputs=[critique_output, model_status],
     )
@@ -140,8 +148,10 @@ with gr.Blocks(title="Canvas Critic") as demo:
             critique_output,
         ],
     ).then(lambda: "", outputs=model_status)
-    demo.load(fn=login_status, outputs=login_note)
-
-
 if __name__ == "__main__":
-    demo.launch(css=CSS, theme=gr.themes.Soft())
+    demo.launch(
+        server_name=SERVER_NAME,
+        server_port=SERVER_PORT,
+        css=CSS,
+        theme=gr.themes.Soft(),
+    )
