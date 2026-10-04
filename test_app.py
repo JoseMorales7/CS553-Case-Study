@@ -1,5 +1,12 @@
+import os
+from unittest.mock import Mock
+
 import pytest
-from local_model import aestoken2score
+import torch
+from PIL import Image
+
+import local_model
+from local_model import parse_local_score
 from remote_model import parse_response
 from images import preview_upload
 from hf_auth import resolve_token
@@ -31,18 +38,18 @@ def test_resolve_token_rejects_empty_values(token):
 
 
 @pytest.mark.parametrize(
-    "token,expected",
-    [("aa", 0), ("az", 25), ("ca", 26), ("cy", 50), ("da", 51), ("dc", 53), ("ey", 100)],
+    "text,expected",
+    [("0", 0), ("100", 100), (" 72\n", 72), ("Score: 65", 65),
+     ("## Score: 58 / 100", 58), ("80/100.", 80)],
 )
-def test_aestoken2score_decodes_artimuse_codes(token, expected):
-    # ArtiMuse answers with a two-letter code standing for a 0-100 score
-    assert aestoken2score(token) == expected
+def test_parse_local_score(text, expected):
+    assert parse_local_score(text) == expected
 
 
-@pytest.mark.parametrize("bad", ["zz", "x", "", "  ", "1/10"])
-def test_aestoken2score_rejects_garbage(bad):
-    # An unparseable answer must return None so the caller can fail over
-    assert aestoken2score(bad) is None
+@pytest.mark.parametrize("bad", ["aa", "", "  ", "8/10", "101", "-1", "80.5",
+                                "Rate from 0 to 100", "75 or 80"])
+def test_parse_local_score_rejects_invalid_answers(bad):
+    assert parse_local_score(bad) is None
 
 
 def test_parse_response_extracts_score_and_body():
@@ -64,3 +71,141 @@ def test_parse_response_without_score_keeps_text():
     score, evaluation = parse_response("The model rambled without a score.")
     assert score is None
     assert evaluation == "The model rambled without a score."
+
+
+@pytest.fixture
+def artwork(tmp_path):
+    path = tmp_path / "artwork.png"
+    Image.new("RGBA", (64, 48), (60, 100, 160, 255)).save(path)
+    return str(path)
+
+
+@pytest.mark.parametrize("temperature", [0.0, 0.7])
+def test_generate_passes_image_and_decodes_only_answer(temperature):
+    processor = Mock()
+    processor.apply_chat_template.return_value = "image and question prompt"
+    processor.return_value = {
+        "input_ids": torch.tensor([[1, 2, 3]], dtype=torch.int64),
+        "attention_mask": torch.ones((1, 3), dtype=torch.int64),
+        "pixel_values": torch.ones((1, 1, 3, 2, 2), dtype=torch.float32),
+        "pixel_attention_mask": torch.ones((1, 1, 2, 2), dtype=torch.bool),
+    }
+    processor.batch_decode.return_value = [" 72 "]
+    model = Mock(device=torch.device("cpu"), dtype=torch.float16)
+    model.generate.return_value = torch.tensor([[1, 2, 3, 7, 8]])
+    image = Image.new("RGB", (2, 2))
+
+    answer = local_model._generate(model, processor, image, "Rate this image", 16,
+                                   temperature, 0.8)
+
+    assert answer == "72"
+    messages = processor.apply_chat_template.call_args.args[0]
+    assert messages[0]["content"][0] == {"type": "image"}
+    assert processor.call_args.kwargs["images"] == [image]
+    kwargs = model.generate.call_args.kwargs
+    assert kwargs["input_ids"].dtype == torch.int64
+    assert kwargs["pixel_values"].dtype == torch.float16
+    assert kwargs["pixel_attention_mask"].dtype == torch.bool
+    assert kwargs["do_sample"] == (temperature > 0)
+    if temperature > 0:
+        assert kwargs["temperature"] == temperature
+        assert kwargs["top_p"] == 0.8
+    else:
+        assert "temperature" not in kwargs and "top_p" not in kwargs
+    assert processor.batch_decode.call_args.args[0].tolist() == [[7, 8]]
+
+
+def test_local_critique_uses_separate_score_and_advice_calls(monkeypatch, artwork):
+    monkeypatch.setattr(local_model, "_ensure_loaded", lambda: ("model", "processor"))
+    generate = Mock(side_effect=["72", "- Crop the edges.\n- Brighten shadows.\n- Reduce clutter."])
+    monkeypatch.setattr(local_model, "_generate", generate)
+    result = local_model.local_critique(artwork, "Composition & Design", 0.7, 0.8)
+    assert result.score == 72
+    assert result.model_name == "HuggingFaceTB/SmolVLM-256M-Instruct"
+    assert result.route == "Local"
+    assert "Crop the edges" in result.to_markdown()
+    score_call, advice_call = generate.call_args_list
+    assert score_call.args[2].mode == "RGB"
+    assert len(score_call.args) == 5  # Score always uses greedy decoding.
+    assert "Composition & Design" in advice_call.args[3]
+    assert advice_call.args[-2:] == (0.7, 0.8)
+
+
+@pytest.mark.parametrize("answers,error", [
+    (["101"], "invalid score"), (["72", ""], "no improvement suggestions"),
+])
+def test_local_critique_rejects_invalid_output(monkeypatch, artwork, answers, error):
+    monkeypatch.setattr(local_model, "_ensure_loaded", lambda: ("model", "processor"))
+    monkeypatch.setattr(local_model, "_generate", Mock(side_effect=answers))
+    with pytest.raises(RuntimeError, match=error):
+        local_model.local_critique(artwork, "", 0.0, 0.9)
+
+
+def test_loader_retries_after_failure_and_caches_complete_pair(monkeypatch):
+    monkeypatch.setattr(local_model, "_model", None)
+    monkeypatch.setattr(local_model, "_processor", None)
+    monkeypatch.setattr(local_model, "_device_and_dtype", lambda: ("cpu", torch.float32))
+    processor = Mock()
+    load_processor = Mock(return_value=processor)
+    model = Mock()
+    model.eval.return_value = model
+    model.to.return_value = model
+    load_model = Mock(side_effect=[RuntimeError("download failed"), model])
+    monkeypatch.setattr(local_model.AutoProcessor, "from_pretrained", load_processor)
+    monkeypatch.setattr(local_model.AutoModelForImageTextToText, "from_pretrained", load_model)
+    with pytest.raises(RuntimeError, match="download failed"):
+        local_model._ensure_loaded()
+    assert local_model._model is None and local_model._processor is None
+    assert local_model._ensure_loaded() == (model, processor)
+    assert local_model._ensure_loaded() == (model, processor)
+    assert load_model.call_count == 2
+    assert load_model.call_args.args == ("HuggingFaceTB/SmolVLM-256M-Instruct",)
+
+
+def test_invalid_local_score_falls_back_to_hosted(monkeypatch, artwork):
+    import router
+    from critique import Critique
+
+    monkeypatch.setattr(local_model, "_ensure_loaded", lambda: ("model", "processor"))
+    monkeypatch.setattr(local_model, "_generate", Mock(return_value="not a score"))
+    remote = Mock(return_value=Critique(80, "- Crop the edge.", "hosted-model", "Hosted"))
+    monkeypatch.setattr(router, "remote_critique", remote)
+    monkeypatch.setattr(router.gr, "Warning", Mock())
+    markdown, status = router.score_artwork(artwork, "", 0, 0.9, True, "hf_visitor")
+    assert "80 / 100" in markdown
+    assert "Failover (local unavailable)" in status
+    assert remote.call_args.args[-1] == "hf_visitor"
+
+
+def test_hosted_failure_falls_back_to_smolvlm(monkeypatch, artwork):
+    import router
+
+    monkeypatch.setattr(local_model, "_ensure_loaded", lambda: ("model", "processor"))
+    monkeypatch.setattr(local_model, "_generate", Mock(side_effect=["72", "- Crop the edges."]))
+    monkeypatch.setattr(router, "remote_critique", Mock(side_effect=RuntimeError("unavailable")))
+    monkeypatch.setattr(router.gr, "Warning", Mock())
+    markdown, status = router.score_artwork(artwork, "", 0, 0.9, False, "hf_visitor")
+    assert "72 / 100" in markdown
+    assert "HuggingFaceTB/SmolVLM-256M-Instruct" in status
+    assert "Failover (hosted unavailable)" in status
+
+
+@pytest.mark.parametrize("cuda,bf16,mps,device,dtype", [
+    (True, True, False, "cuda", torch.bfloat16),
+    (True, False, False, "cuda", torch.float16),
+    (False, False, True, "mps", torch.float32),
+    (False, False, False, "cpu", torch.float32),
+])
+def test_device_selection_uses_supported_precision(monkeypatch, cuda, bf16, mps, device, dtype):
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: cuda)
+    monkeypatch.setattr(torch.cuda, "is_bf16_supported", lambda: bf16)
+    monkeypatch.setattr(torch.backends.mps, "is_available", lambda: mps)
+    assert local_model._device_and_dtype() == (device, dtype)
+
+
+@pytest.mark.skipif(os.getenv("SMOLVLM_SMOKE_TEST") != "1",
+                    reason="Opt-in test downloads the real model and runs inference")
+def test_real_smolvlm_inference(artwork):
+    result = local_model.local_critique(artwork, "Composition & Design", 0, 0.9)
+    assert 0 <= result.score <= 100
+    assert result.evaluation.strip()

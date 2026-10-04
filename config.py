@@ -4,7 +4,7 @@
 # How to improve
 
 REMOTE_MODEL = "Qwen/Qwen3.8-27B"
-LOCAL_MODEL = "Thunderbolt215215/ArtiMuse"
+LOCAL_MODEL = "HuggingFaceTB/SmolVLM-256M-Instruct"
 
 # Select model provider
 REMOTE_PROVIDER = "auto"
@@ -24,21 +24,12 @@ ASPECTS = [
 ]
 
 
-# ArtiMuse's own scoring question
-# The model is trained to answer with a two-letter code that maps onto 0-100
-ARTIMUSE_SCORE_QUESTION = """
-Rate the aesthetics score of the image in 0-100.
-In the output format, numbers are replaced by 2 corresponding letters,
-and the mapping relationship is:
-score 0 to 25: 0-aa, 1-ab, 2-ac, 3-ad, ... , 25-az,
-score 26 to 50: 26-ca, 27-cb, 28-cc, 29-cd, ..., 50-cy,
-score 51 to 75: 51-da, 52-db, 53-dc, 54-dd, ..., 75-dy,
-score 76 to 100: 76-ea, 77-eb, 78-ec, 79-ed, ..., 100-ey.
+LOCAL_SCORE_QUESTION = (
+    "Rate the overall aesthetic quality of this artwork from 0 to 100. "
+    "Reply with only one whole number between 0 and 100."
+)
 
-The answer only outputs 2 corresponding letters.
-"""
-
-# Ask for advice from ArtiMuse
+# Keep the local requests simple for the small instruction model.
 def advice_question(aspect: str) -> str:
     focus = f" in terms of {aspect}" if aspect else ""
     return f"""Suggest three specific ways to improve the aesthetic quality of this image{focus}.

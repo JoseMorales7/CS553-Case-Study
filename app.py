@@ -85,8 +85,7 @@ with gr.Blocks(title="Canvas Critic") as demo:
         )
         gr.Markdown(
             f"Hosted: `{REMOTE_MODEL}` — a general vision LLM.  \n"
-            f"Local: `{LOCAL_MODEL}` — a model trained specifically to "
-            "score image aesthetics.",
+            f"Local: `{LOCAL_MODEL}` — a compact vision LLM running on this server.",
             elem_id="model-note",
         )
 

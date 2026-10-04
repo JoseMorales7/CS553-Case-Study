@@ -38,6 +38,18 @@ $env:GRADIO_SERVER_PORT = "9000"
 python app.py
 ```
 
-Selecting the local model downloads and loads the approximately 16 GB ArtiMuse
-checkpoint. Set `PRELOAD_LOCAL_MODEL=1` to load it at startup; otherwise it is
-loaded the first time it is used.
+Selecting the local model downloads and caches `HuggingFaceTB/SmolVLM-256M-Instruct`
+on first use. It runs on CPU, CUDA, or Apple MPS; a GPU is optional. Set
+`PRELOAD_LOCAL_MODEL=1` to load it at startup instead. The server needs internet
+access for the initial download and a writable Hugging Face cache directory.
+
+The model receives the image through its own multimodal processor and makes
+separate requests for a numeric score and three improvement suggestions.
+Its score is an instruction-generated opinion, not a calibrated aesthetic
+measurement. Invalid scores or empty advice trigger the existing hosted-model
+fallback when the visitor has supplied a token.
+
+Run the regression tests with `python -m pytest` after installing `pytest`.
+To include a real checkpoint inference test on Linux, run
+`SMOLVLM_SMOKE_TEST=1 python -m pytest -q test_app.py::test_real_smolvlm_inference`.
+This test downloads the model if it is not already cached.
