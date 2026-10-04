@@ -1,4 +1,6 @@
 import os
+import subprocess
+import sys
 from unittest.mock import Mock
 
 import pytest
@@ -142,6 +144,8 @@ def test_local_critique_rejects_invalid_output(monkeypatch, artwork, answers, er
 
 
 def test_loader_retries_after_failure_and_caches_complete_pair(monkeypatch):
+    from transformers import AutoModelForImageTextToText, AutoProcessor
+
     monkeypatch.setattr(local_model, "_model", None)
     monkeypatch.setattr(local_model, "_processor", None)
     monkeypatch.setattr(local_model, "_device_and_dtype", lambda: ("cpu", torch.float32))
@@ -151,8 +155,8 @@ def test_loader_retries_after_failure_and_caches_complete_pair(monkeypatch):
     model.eval.return_value = model
     model.to.return_value = model
     load_model = Mock(side_effect=[RuntimeError("download failed"), model])
-    monkeypatch.setattr(local_model.AutoProcessor, "from_pretrained", load_processor)
-    monkeypatch.setattr(local_model.AutoModelForImageTextToText, "from_pretrained", load_model)
+    monkeypatch.setattr(AutoProcessor, "from_pretrained", load_processor)
+    monkeypatch.setattr(AutoModelForImageTextToText, "from_pretrained", load_model)
     with pytest.raises(RuntimeError, match="download failed"):
         local_model._ensure_loaded()
     assert local_model._model is None and local_model._processor is None
@@ -201,6 +205,39 @@ def test_device_selection_uses_supported_precision(monkeypatch, cuda, bf16, mps,
     monkeypatch.setattr(torch.cuda, "is_bf16_supported", lambda: bf16)
     monkeypatch.setattr(torch.backends.mps, "is_available", lambda: mps)
     assert local_model._device_and_dtype() == (device, dtype)
+
+
+def test_local_module_import_does_not_load_inference_dependencies():
+    # Check a fresh interpreter so earlier tests cannot hide an eager import.
+    env = dict(os.environ, PRELOAD_LOCAL_MODEL="1")
+    result = subprocess.run(
+        [sys.executable, "-c", "import sys; import local_model; "
+         "assert 'torch' not in sys.modules; assert 'transformers' not in sys.modules; "
+         "assert local_model._model is None"],
+        env=env, capture_output=True, text=True, timeout=15,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_background_preload_does_not_block_startup(monkeypatch):
+    from threading import Event
+
+    entered = Event()
+    release = Event()
+
+    def slow_load():
+        entered.set()
+        assert release.wait(timeout=5)
+
+    monkeypatch.setattr(local_model, "_ensure_loaded", slow_load)
+    thread = local_model.preload_in_background()
+    try:
+        assert entered.wait(timeout=2)
+        assert thread.is_alive() and thread.daemon
+    finally:
+        release.set()
+        thread.join(timeout=2)
+    assert not thread.is_alive()
 
 
 @pytest.mark.skipif(os.getenv("SMOLVLM_SMOKE_TEST") != "1",

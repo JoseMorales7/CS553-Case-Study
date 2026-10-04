@@ -40,7 +40,9 @@ python app.py
 
 Selecting the local model downloads and caches `HuggingFaceTB/SmolVLM-256M-Instruct`
 on first use. It runs on CPU, CUDA, or Apple MPS; a GPU is optional. Set
-`PRELOAD_LOCAL_MODEL=1` to load it at startup instead. The server needs internet
+`PRELOAD_LOCAL_MODEL=1` to load it in the background at startup instead. The web
+interface can start while the checkpoint loads; the first local request waits
+for loading to finish. The server needs internet
 access for the initial download and a writable Hugging Face cache directory.
 
 The model receives the image through its own multimodal processor and makes

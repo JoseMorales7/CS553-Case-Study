@@ -1,10 +1,17 @@
+import logging
 import os
+
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    print("Starting Canvas Critic: importing Gradio...", flush=True)
 
 import gradio as gr
 from config import LOCAL_MODEL, REMOTE_MODEL, ASPECTS
 from router import score_artwork # routing and failover
 from images import preview_upload
 
+if __name__ == "__main__":
+    print("Building Canvas Critic interface...", flush=True)
 
 SERVER_NAME = os.getenv("GRADIO_SERVER_NAME", "0.0.0.0")
 SERVER_PORT = int(os.getenv("GRADIO_SERVER_PORT", "8000"))
@@ -148,6 +155,11 @@ with gr.Blocks(title="Canvas Critic") as demo:
         ],
     ).then(lambda: "", outputs=model_status)
 if __name__ == "__main__":
+    if os.getenv("PRELOAD_LOCAL_MODEL", "").lower() in {"1", "true", "yes"}:
+        from local_model import preload_in_background
+        print("Preloading local model in the background...", flush=True)
+        preload_in_background()
+    print(f"Launching Canvas Critic on {SERVER_NAME}:{SERVER_PORT}...", flush=True)
     demo.launch(
         server_name=SERVER_NAME,
         server_port=SERVER_PORT,

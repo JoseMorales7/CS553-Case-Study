@@ -1,11 +1,8 @@
 import logging
-import os
 import re
-from threading import RLock
+from threading import RLock, Thread
 
-import torch
 from PIL import Image, ImageOps
-from transformers import AutoModelForImageTextToText, AutoProcessor
 
 from config import LOCAL_MODEL, LOCAL_SCORE_QUESTION, advice_question, LOCAL_MAX_TOKENS
 from critique import Critique
@@ -32,6 +29,8 @@ def parse_local_score(text: str) -> int | None:
 
 
 def _device_and_dtype():
+    import torch
+
     if torch.cuda.is_available():
         dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
         return "cuda", dtype
@@ -45,6 +44,9 @@ def _ensure_loaded():
     with _model_lock:
         if _model is not None and _processor is not None:
             return _model, _processor
+
+        logger.info("Importing the local model inference dependencies")
+        from transformers import AutoModelForImageTextToText, AutoProcessor
 
         device, dtype = _device_and_dtype()
         logger.info("Loading %s on %s (%s)", LOCAL_MODEL, device, dtype)
@@ -63,6 +65,8 @@ def _ensure_loaded():
 
 
 def _generate(model, processor, image, question, max_new_tokens, temperature=0.0, top_p=0.9):
+    import torch
+
     messages = [{
         "role": "user",
         "content": [
@@ -116,5 +120,15 @@ def local_critique(image_path, aspect, temperature, top_p) -> Critique:
     )
 
 
-if os.environ.get("PRELOAD_LOCAL_MODEL", "").lower() in {"1", "true", "yes"}:
-    _ensure_loaded()
+def preload_in_background():
+    """Warm the checkpoint without blocking the web server's startup."""
+    def load():
+        try:
+            _ensure_loaded()
+            logger.info("Local model ready")
+        except Exception:
+            logger.exception("Local model preload failed; it will retry on first use")
+
+    thread = Thread(target=load, name="local-model-preload", daemon=True)
+    thread.start()
+    return thread
