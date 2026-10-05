@@ -14,7 +14,7 @@ if __name__ == "__main__":
     print("Building Canvas Critic interface...", flush=True)
 
 SERVER_NAME = os.getenv("GRADIO_SERVER_NAME", "0.0.0.0")
-SERVER_PORT = int(os.getenv("GRADIO_SERVER_PORT", "8000"))
+SERVER_PORT = int(os.getenv("GRADIO_SERVER_PORT", "7860"))
 
 
 def clear_workspace():
@@ -166,4 +166,5 @@ if __name__ == "__main__":
         server_port=SERVER_PORT,
         css=CSS,
         theme=gr.themes.Soft(),
+        share=False
     )
