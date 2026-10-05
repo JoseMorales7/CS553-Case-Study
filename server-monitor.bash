@@ -1,0 +1,376 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+HOST="paffenroth-23.dyn.wpi.edu"
+PORT="22006"
+USER="student-admin"
+# The SSH session and health check run inside the container. The host publishes
+# port 8006 separately, forwarding it to this container port.
+APP_PORT="7860"
+
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+SHARED_KEY="$SCRIPT_DIR/student-admin_key"
+SHARED_PUBLIC_KEY="$SCRIPT_DIR/student-admin_key.pub"
+MONITOR_KEY="$SCRIPT_DIR/professor_vm_monitor"
+MONITOR_PUBLIC_KEY="$SCRIPT_DIR/professor_vm_monitor.pub"
+KNOWN_HOSTS="$HOME/.ssh/known_hosts"
+
+log() {
+  printf '%s: %s\n' "$(date -Is)" "$*"
+}
+
+for key_file in \
+    "$SHARED_KEY" "$SHARED_PUBLIC_KEY" \
+    "$MONITOR_KEY" "$MONITOR_PUBLIC_KEY"; do
+  if [[ ! -r "$key_file" ]]; then
+    log "required key file is not readable: $key_file" >&2
+    exit 1
+  fi
+done
+
+shared_public_key_blob="$(
+  awk 'NF >= 2 {print $2; exit}' "$SHARED_PUBLIC_KEY"
+)"
+monitor_public_key_blob="$(
+  awk 'NF >= 2 {print $2; exit}' "$MONITOR_PUBLIC_KEY"
+)"
+
+# These keys must be usable non-interactively and each private key must match
+# the public key that the script will add or remove.
+if ! shared_private_key_blob="$(
+    ssh-keygen -y -P '' -f "$SHARED_KEY" 2>/dev/null | awk '{print $2}'
+  )"; then
+  log "$SHARED_KEY is unreadable or requires a passphrase" >&2
+  exit 1
+fi
+if ! monitor_private_key_blob="$(
+    ssh-keygen -y -P '' -f "$MONITOR_KEY" 2>/dev/null | awk '{print $2}'
+  )"; then
+  log "$MONITOR_KEY is unreadable or requires a passphrase" >&2
+  exit 1
+fi
+if [[ "$shared_private_key_blob" != "$shared_public_key_blob" ]]; then
+  log "$SHARED_KEY does not match $SHARED_PUBLIC_KEY" >&2
+  exit 1
+fi
+if [[ "$monitor_private_key_blob" != "$monitor_public_key_blob" ]]; then
+  log "$MONITOR_KEY does not match $MONITOR_PUBLIC_KEY" >&2
+  exit 1
+fi
+
+shared_public_key_blob_b64="$(
+  printf '%s' "$shared_public_key_blob" | base64 | tr -d '\n'
+)"
+
+NORMAL_OPTIONS=(
+  -F /dev/null
+  -p "$PORT"
+  -o BatchMode=yes
+  -o IdentitiesOnly=yes
+  -o IdentityAgent=none
+  -o PreferredAuthentications=publickey
+  -o PasswordAuthentication=no
+  -o KbdInteractiveAuthentication=no
+  -o ConnectTimeout=10
+  -o ConnectionAttempts=1
+  -o StrictHostKeyChecking=yes
+  -o UserKnownHostsFile="$KNOWN_HOSTS"
+)
+
+RECOVERY_OPTIONS=(
+  -F /dev/null
+  -p "$PORT"
+  -o BatchMode=yes
+  -o IdentitiesOnly=yes
+  -o IdentityAgent=none
+  -o PreferredAuthentications=publickey
+  -o PasswordAuthentication=no
+  -o KbdInteractiveAuthentication=no
+  -o ConnectTimeout=10
+  -o ConnectionAttempts=1
+  -o StrictHostKeyChecking=no
+  -o UserKnownHostsFile=/dev/null
+)
+
+REFRESH_OPTIONS=(
+  -F /dev/null
+  -p "$PORT"
+  -o BatchMode=yes
+  -o IdentitiesOnly=yes
+  -o IdentityAgent=none
+  -o PreferredAuthentications=publickey
+  -o PasswordAuthentication=no
+  -o KbdInteractiveAuthentication=no
+  -o ConnectTimeout=10
+  -o ConnectionAttempts=1
+  -o StrictHostKeyChecking=accept-new
+  -o UserKnownHostsFile="$KNOWN_HOSTS"
+)
+
+deploy_app() {
+  ssh "${NORMAL_OPTIONS[@]}" \
+      -i "$MONITOR_KEY" \
+      "$USER@$HOST" bash -s -- "$APP_PORT" <<'REMOTE_DEPLOY'
+set -euo pipefail
+
+app_port="$1"
+app_dir="$HOME/CS553-Case-Study"
+pid_file="$HOME/.canvas-critic.pid"
+log_file="$HOME/canvas-critic.log"
+
+# A PID alone is not enough: verify that Gradio is actually serving requests.
+if [[ -s "$pid_file" ]]; then
+  app_pid="$(<"$pid_file")"
+  if kill -0 "$app_pid" 2>/dev/null; then
+    if curl -fsS "http://127.0.0.1:${app_port}/" >/dev/null 2>&1; then
+      printf 'Canvas Critic is already running (PID %s).\n' "$app_pid"
+      exit 0
+    fi
+    process_cwd="$(readlink -f "/proc/$app_pid/cwd" 2>/dev/null || true)"
+    process_command="$(ps -p "$app_pid" -o args= 2>/dev/null || true)"
+    if [[ "$process_cwd" != "$app_dir" || "$process_command" != *"app.py"* ]]; then
+      printf 'PID %s is not the expected Canvas Critic process; refusing to stop it.\n' \
+        "$app_pid" >&2
+      exit 1
+    fi
+    printf 'Restarting Canvas Critic on port %s...\n' "$app_port"
+    kill "$app_pid"
+    for _ in $(seq 1 10); do
+      kill -0 "$app_pid" 2>/dev/null || break
+      sleep 1
+    done
+  fi
+fi
+
+# Load uv when it was installed by an earlier run.
+if [[ -f "$HOME/.local/bin/env" ]]; then
+  source "$HOME/.local/bin/env"
+fi
+
+if ! command -v uv >/dev/null 2>&1; then
+  printf 'Installing uv...\n'
+  curl -LsSf https://astral.sh/uv/install.sh | sh
+  source "$HOME/.local/bin/env"
+fi
+
+if [[ ! -d "$app_dir/.git" ]]; then
+  if [[ -e "$app_dir" ]]; then
+    printf '%s\n' "$app_dir exists but is not a Git repository" >&2
+    exit 1
+  fi
+  printf 'Cloning the Canvas Critic server branch...\n'
+  git clone -b server \
+    https://github.com/JoseMorales7/CS553-Case-Study.git "$app_dir"
+fi
+
+cd "$app_dir"
+printf 'Synchronizing application dependencies...\n'
+uv sync
+source .venv/bin/activate
+
+printf 'Starting Canvas Critic...\n'
+GRADIO_SERVER_NAME=0.0.0.0 GRADIO_SERVER_PORT="$app_port" \
+  nohup python app.py >"$log_file" 2>&1 </dev/null &
+app_pid=$!
+printf '%s\n' "$app_pid" >"$pid_file"
+
+# Wait up to 30 seconds for Gradio to begin accepting HTTP requests.
+for _ in $(seq 1 30); do
+  if ! kill -0 "$app_pid" 2>/dev/null; then
+    printf 'Canvas Critic exited during startup. Recent log output:\n' >&2
+    tail -n 30 "$log_file" >&2 || true
+    exit 1
+  fi
+  if curl -fsS "http://127.0.0.1:${app_port}/" >/dev/null 2>&1; then
+    printf 'Canvas Critic is running on port %s (PID %s).\n' \
+      "$app_port" "$app_pid"
+    exit 0
+  fi
+  sleep 1
+done
+
+printf 'Canvas Critic did not become ready within 30 seconds. Recent log output:\n' >&2
+tail -n 30 "$log_file" >&2 || true
+exit 1
+REMOTE_DEPLOY
+}
+
+remove_shared_key() {
+  ssh "${NORMAL_OPTIONS[@]}" \
+      -i "$MONITOR_KEY" \
+      "$USER@$HOST" \
+      bash -s -- "$shared_public_key_blob_b64" <<'REMOTE_SCRIPT'
+set -euo pipefail
+
+shared_key_blob="$(printf '%s' "$1" | base64 -d)"
+authorized_keys="$HOME/.ssh/authorized_keys"
+tmp="$(mktemp)"
+
+awk -v blob="$shared_key_blob" '
+  {
+    remove = 0
+    for (i = 1; i <= NF; i++) {
+      if ($i == blob) {
+        remove = 1
+        break
+      }
+    }
+    if (!remove) print
+  }
+' "$authorized_keys" >"$tmp"
+
+cat "$tmp" >"$authorized_keys"
+rm -f "$tmp"
+chmod 600 "$authorized_keys"
+REMOTE_SCRIPT
+}
+
+check_server() {
+  # Normal state.
+  log "checking $USER@$HOST:$PORT"
+  if ssh "${NORMAL_OPTIONS[@]}" \
+    -i "$MONITOR_KEY" \
+    "$USER@$HOST" true 2>/dev/null; then
+    log "monitor key works; checking that the shared key is revoked"
+    if ssh "${NORMAL_OPTIONS[@]}" \
+      -i "$SHARED_KEY" \
+      "$USER@$HOST" true 2>/dev/null; then
+      log "shared key still works; removing it"
+      if ! remove_shared_key; then
+        log "failed to remove the shared key" >&2
+        return 1
+      fi
+      if ssh "${NORMAL_OPTIONS[@]}" \
+          -i "$SHARED_KEY" \
+          "$USER@$HOST" true 2>/dev/null; then
+        log "shared key is still authorized after removal" >&2
+        return 1
+      fi
+    fi
+
+    log "shared key is revoked; checking application"
+    if ! deploy_app; then
+      printf '%s: server is secure, but app deployment failed\n' \
+        "$(date -Is)" >&2
+      return 1
+    fi
+    log "server is secure and Canvas Critic is available"
+    return 0
+  fi
+
+  # Reset state: use the shared recovery key while ignoring the stale host key.
+  log "monitor key failed; trying the shared recovery key"
+  if ! ssh "${RECOVERY_OPTIONS[@]}" \
+    -i "$SHARED_KEY" \
+    "$USER@$HOST" true 2>/dev/null; then
+    printf '%s: VM unavailable or shared key failed\n' "$(date -Is)" >&2
+    return 1
+  fi
+
+# The VM was rebuilt, so replace its stale known_hosts entry. The next shared-
+# key connection records the current signature; later connections are strict.
+mkdir -p "$HOME/.ssh"
+chmod 700 "$HOME/.ssh"
+touch "$KNOWN_HOSTS"
+chmod 600 "$KNOWN_HOSTS"
+ssh-keygen -R "[$HOST]:$PORT" -f "$KNOWN_HOSTS" >/dev/null 2>&1 || true
+
+log "recording the rebuilt VM host key"
+if ! ssh "${REFRESH_OPTIONS[@]}" \
+    -i "$SHARED_KEY" \
+    "$USER@$HOST" true 2>/dev/null; then
+  printf '%s: failed to record the rebuilt VM host key\n' "$(date -Is)" >&2
+  return 1
+fi
+
+log "installing the monitor key"
+monitor_public_key_b64="$(
+  base64 <"$MONITOR_PUBLIC_KEY" | tr -d '\n'
+)"
+
+# Add the monitor key only. Do not remove the shared key yet.
+if ! ssh "${NORMAL_OPTIONS[@]}" \
+    -i "$SHARED_KEY" \
+    "$USER@$HOST" \
+    bash -s -- "$monitor_public_key_b64" <<'REMOTE_SCRIPT'
+set -euo pipefail
+
+monitor_key="$(printf '%s' "$1" | base64 -d)"
+authorized_keys="$HOME/.ssh/authorized_keys"
+
+umask 077
+mkdir -p "$HOME/.ssh"
+touch "$authorized_keys"
+
+grep -Fqx -- "$monitor_key" "$authorized_keys" || \
+  printf '%s\n' "$monitor_key" >>"$authorized_keys"
+
+chmod 700 "$HOME/.ssh"
+chmod 600 "$authorized_keys"
+REMOTE_SCRIPT
+then
+  printf '%s: failed to install monitor key\n' "$(date -Is)" >&2
+  return 1
+fi
+
+# Verify the monitor key before removing the shared key.
+log "verifying the monitor key"
+if ! ssh "${NORMAL_OPTIONS[@]}" \
+    -i "$MONITOR_KEY" \
+    "$USER@$HOST" true 2>/dev/null; then
+  printf '%s: monitor key verification failed; shared key preserved\n' \
+    "$(date -Is)" >&2
+  return 1
+fi
+
+# Remove the shared key only after monitor verification succeeds.
+log "removing the shared recovery key"
+if ! remove_shared_key; then
+  printf '%s: monitor restored; failed to remove shared key\n' \
+    "$(date -Is)" >&2
+  return 1
+fi
+
+# Confirm both halves of the final state.
+if ! ssh "${NORMAL_OPTIONS[@]}" \
+    -i "$MONITOR_KEY" \
+    "$USER@$HOST" true 2>/dev/null; then
+  printf '%s: final monitor key verification failed\n' "$(date -Is)" >&2
+  return 1
+fi
+
+if ssh "${NORMAL_OPTIONS[@]}" \
+    -i "$SHARED_KEY" \
+    "$USER@$HOST" true 2>/dev/null; then
+  printf '%s: shared key is still authorized\n' "$(date -Is)" >&2
+  return 1
+fi
+
+log "deploying Canvas Critic"
+if ! deploy_app; then
+  printf '%s: server secured, but app deployment failed\n' "$(date -Is)" >&2
+  return 1
+fi
+
+printf '%s: monitor key restored, shared key removed, and app deployed\n' \
+  "$(date -Is)"
+return 0
+}
+
+while true; do
+  set +e
+  (
+    set -e
+    check_server
+  )
+  check_status=$?
+  set -e
+
+  if ((check_status != 0)); then
+    log "check failed; the monitor will try again"
+  fi
+
+  sleep_seconds=$((55 + RANDOM % 11))
+  log "next check in ${sleep_seconds} seconds"
+  sleep "$sleep_seconds"
+done
