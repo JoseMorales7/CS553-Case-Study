@@ -31,9 +31,13 @@ def score_artwork(
 
         token = resolve_token(hf_token)
         if not token:
-            raise gr.Error(
-                "Enter your Hugging Face token or select the local model."
+            gr.Warning(
+                "No Hugging Face token was provided. "
+                "Automatically switching to the local model."
             )
+            result = local_critique(image_path, aspect, temperature, top_p)
+            result.route = "Local (no Hugging Face token)"
+            return result.to_markdown(), result.to_status()
 
         try:
             result = remote_critique(image_path, aspect, temperature, top_p, token)

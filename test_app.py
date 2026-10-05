@@ -181,6 +181,50 @@ def test_invalid_local_score_falls_back_to_hosted(monkeypatch, artwork):
     assert remote.call_args.args[-1] == "hf_visitor"
 
 
+@pytest.mark.parametrize("token", [None, "", "   "])
+def test_missing_token_automatically_uses_local_and_notifies(monkeypatch, artwork, token):
+    import router
+    from critique import Critique
+
+    local = Mock(return_value=Critique(72, "- Crop the edges.", local_model.LOCAL_MODEL, "Local"))
+    remote = Mock()
+    warning = Mock()
+    monkeypatch.setattr(router, "local_critique", local)
+    monkeypatch.setattr(router, "remote_critique", remote)
+    monkeypatch.setattr(router.gr, "Warning", warning)
+    markdown, status = router.score_artwork(artwork, "Composition & Design", 0, 0.9, False, token)
+    local.assert_called_once_with(artwork, "Composition & Design", 0, 0.9)
+    remote.assert_not_called()
+    assert "72 / 100" in markdown
+    assert "Local (no Hugging Face token)" in status
+    warning.assert_called_once_with(
+        "No Hugging Face token was provided. Automatically switching to the local model."
+    )
+
+
+@pytest.mark.parametrize("use_local", [False, True])
+def test_token_and_checkbox_select_requested_model(monkeypatch, artwork, use_local):
+    import router
+    from critique import Critique
+
+    local = Mock(return_value=Critique(72, "- Crop.", "local", "Local"))
+    remote = Mock(return_value=Critique(80, "- Brighten.", "hosted", "Hosted"))
+    warning = Mock()
+    monkeypatch.setattr(router, "local_critique", local)
+    monkeypatch.setattr(router, "remote_critique", remote)
+    monkeypatch.setattr(router.gr, "Warning", warning)
+    _, status = router.score_artwork(artwork, "", 0, 0.9, use_local, " hf_visitor ")
+    if use_local:
+        local.assert_called_once()
+        remote.assert_not_called()
+        assert "Local" in status
+    else:
+        remote.assert_called_once_with(artwork, "", 0, 0.9, "hf_visitor")
+        local.assert_not_called()
+        assert "Hosted" in status
+    warning.assert_not_called()
+
+
 def test_hosted_failure_falls_back_to_smolvlm(monkeypatch, artwork):
     import router
 

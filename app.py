@@ -64,6 +64,7 @@ with gr.Blocks(title="Canvas Critic") as demo:
             type="password",
             placeholder="hf_...",
             info=(
+                "Optional: leave blank to use the local model automatically. "
                 "Used for your hosted inference requests. The app does not save "
                 "the token to disk."
             ),

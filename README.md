@@ -28,7 +28,9 @@ That token is used for that visitor's hosted inference request and is not read
 from the server's Hugging Face login or written to disk by the app. Because the
 default local connection uses plain HTTP, only enter credentials on a trusted
 network. Use an HTTPS reverse proxy before exposing the app over the internet.
-Visitors who do not provide a token can select the local model instead.
+Requests without a token automatically use the local model and show a
+notification explaining the switch. The checkbox can also force local inference
+when a token is provided.
 
 The default bind address and port can be overridden when needed:
 
