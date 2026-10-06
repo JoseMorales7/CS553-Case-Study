@@ -1,9 +1,0 @@
-accelerate
-einops
-huggingface_hub
-pillow
-timm
-torch
-torchvision
-transformers>=4.49.0
-gradio

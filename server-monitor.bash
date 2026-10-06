@@ -1,3 +1,13 @@
+# Large portions of this model was overwritten by the 
+# Query 1:
+# The monitoring script I currently have seems to have issues connecting to the server when it is rebuily due to its signature changing.
+# Please modify the file such that the ssh signature is regenerated when the student-admin key can be used to connect to the server.
+
+# Query 2:
+# Please make it so that this script checks to see if the server is secure every 55 to 65 seconds, randomly.
+# If the server isn't secure, please execute the script normally. 
+# After it executes, execute the deployment commands to build and run the app.
+
 #!/usr/bin/env bash
 set -euo pipefail
 

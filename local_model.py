@@ -1,3 +1,7 @@
+# Large portions of this file was editted by codex to make the new model we chose work.
+# Query: Modify the local_model.py file to switch the model to HuggingFaceTB/SmolVLM-256M-Instruct.
+# Ensure that the correct functions are used to interact with the model.
+
 import logging
 import re
 from threading import RLock, Thread
