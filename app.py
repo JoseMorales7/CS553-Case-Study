@@ -7,6 +7,10 @@ if __name__ == "__main__":
 
 import gradio as gr
 from config import LOCAL_MODEL, REMOTE_MODEL, ASPECTS
+import router
+from gradio.themes import Soft
+from notifications import DiscordNotifier
+from resource_monitor import ResourceMonitor, ResourceMonitorUnavailable
 from router import score_artwork # routing and failover
 from images import preview_upload
 
@@ -155,7 +159,34 @@ with gr.Blocks(title="Canvas Critic") as demo:
             critique_output,
         ],
     ).then(lambda: "", outputs=model_status)
+# Resource monitoring and application launch
+# Written by GPT5.6-Luna
 if __name__ == "__main__":
+    try:
+        notifier = DiscordNotifier()
+
+        def notify_transition(state, snapshot):
+            import threading
+
+            threading.Thread(
+                target=notifier.notify,
+                args=(state, snapshot),
+                name="discord-resource-notification",
+                daemon=True,
+            ).start()
+
+        resource_monitor = ResourceMonitor(on_transition=notify_transition)
+        router.set_capacity_check(resource_monitor.is_overloaded)
+        resource_monitor.start()
+    except ResourceMonitorUnavailable as error:
+        logging.critical("Resource monitoring is unavailable: %s", error)
+        logging.critical("Requests will remain rejected until psutil is installed.")
+        router.set_capacity_check(lambda: False)
+    except Exception:
+        logging.exception("Resource monitoring could not be initialized")
+        logging.critical("Requests will remain rejected until monitoring is fixed.")
+        router.set_capacity_check(lambda: False)
+
     if os.getenv("PRELOAD_LOCAL_MODEL", "").lower() in {"1", "true", "yes"}:
         from local_model import preload_in_background
         print("Preloading local model in the background...", flush=True)
@@ -165,6 +196,6 @@ if __name__ == "__main__":
         server_name=SERVER_NAME,
         server_port=SERVER_PORT,
         css=CSS,
-        theme=gr.themes.Soft(),
+        theme=Soft(),
         share=False
     )

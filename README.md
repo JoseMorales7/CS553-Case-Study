@@ -1,7 +1,7 @@
 # Canvas Critic
 
-Canvas Critic is a Gradio app that scores an uploaded artwork and suggests
-improvements. It runs as a normal local web server and listens on port 8000.
+ Canvas Critic is a Gradio app that scores an uploaded artwork and suggests
+ improvements. It runs as a normal local web server and listens on port 7860 by default.
 
 ## Run locally
 
@@ -19,9 +19,9 @@ Then start the app:
 python app.py
 ```
 
-Open `http://localhost:8000` on the host computer. Other people on the same
+Open `http://localhost:7860` on the host computer. Other people on the same
 network can use `http://<host-ip-address>:8000`. The operating-system firewall
-must allow inbound TCP traffic on port 8000.
+must allow inbound TCP traffic on port 7860.
 
 Each visitor can enter their own Hugging Face token in the masked token field.
 That token is used for that visitor's hosted inference request and is not read
@@ -57,3 +57,8 @@ Run the regression tests with `python -m pytest` after installing `pytest`.
 To include a real checkpoint inference test on Linux, run
 `SMOLVLM_SMOKE_TEST=1 python -m pytest -q test_app.py::test_real_smolvlm_inference`.
 This test downloads the model if it is not already cached.
+
+Resource monitoring and overload behavior are documented in
+[MONITORING.md](MONITORING.md). The monitor requires `psutil`; Discord alerts
+are optional for availability and use the protected `DISCORD_WEBHOOK_URL`
+deployment variable when configured.
