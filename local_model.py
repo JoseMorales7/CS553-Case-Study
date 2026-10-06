@@ -52,17 +52,25 @@ def _ensure_loaded():
         logger.info("Importing the local model inference dependencies")
         from transformers import AutoModelForImageTextToText, AutoProcessor
 
-        device, dtype = _device_and_dtype()
+        import torch
+        device_name, dtype = _device_and_dtype()
+        device = torch.device(device_name)
         logger.info("Loading %s on %s (%s)", LOCAL_MODEL, device, dtype)
         processor = AutoProcessor.from_pretrained(
             LOCAL_MODEL, size={"longest_edge": 1024}
         )
-        model = AutoModelForImageTextToText.from_pretrained(
-            LOCAL_MODEL,
-            torch_dtype=dtype,
-            low_cpu_mem_usage=True,
-            attn_implementation="eager",
-        ).eval().to(device)
+        from typing import Any, cast
+        model = cast(
+            Any,
+            AutoModelForImageTextToText.from_pretrained(
+                LOCAL_MODEL,
+                torch_dtype=dtype,
+                low_cpu_mem_usage=True,
+                attn_implementation="eager",
+            )
+        )
+        model.eval()
+        model.to(device=device)
         # Publish the cache only after both objects have loaded successfully.
         _model, _processor = model, processor
         return model, processor
