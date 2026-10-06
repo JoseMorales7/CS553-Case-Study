@@ -18,9 +18,7 @@ Then start the app:
 python app.py
 ```
 
-Open `http://localhost:8000` on the host computer. Other people on the same
-network can use `http://<host-ip-address>:8000`. The operating-system firewall
-must allow inbound TCP traffic on port 8000.
+Open `http://paffenroth-23.dyn.wpi.edu:8006` to access the app.
 
 Each visitor can enter their own Hugging Face token in the masked token field.
 That token is used for that visitor's hosted inference request and is not read
@@ -35,7 +33,7 @@ The default bind address and port can be overridden when needed:
 
 ```powershell
 $env:GRADIO_SERVER_NAME = "127.0.0.1"
-$env:GRADIO_SERVER_PORT = "9000"
+$env:GRADIO_SERVER_PORT = "8006"
 python app.py
 ```
 
