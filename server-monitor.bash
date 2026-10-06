@@ -20,6 +20,7 @@ USER="student-admin"
 APP_PORT="7860"
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+ENV_FILE="$SCRIPT_DIR/.env"
 SHARED_KEY="$SCRIPT_DIR/student-admin_key"
 SHARED_PUBLIC_KEY="$SCRIPT_DIR/student-admin_key.pub"
 MONITOR_KEY="$SCRIPT_DIR/professor_vm_monitor"
@@ -38,6 +39,11 @@ for key_file in \
     exit 1
   fi
 done
+
+if [[ ! -f "$ENV_FILE" || ! -r "$ENV_FILE" ]]; then
+  log "required environment file is not readable: $ENV_FILE" >&2
+  exit 1
+fi
 
 shared_public_key_blob="$(
   awk 'NF >= 2 {print $2; exit}' "$SHARED_PUBLIC_KEY"
@@ -119,6 +125,12 @@ REFRESH_OPTIONS=(
 )
 
 deploy_app() {
+  # Stage the local .env on the server before the repository is cloned.
+  ssh "${NORMAL_OPTIONS[@]}" \
+      -i "$MONITOR_KEY" \
+      "$USER@$HOST" \
+      'umask 077; cat > "$HOME/.canvas-critic.env"' <"$ENV_FILE" || return 1
+
   ssh "${NORMAL_OPTIONS[@]}" \
       -i "$MONITOR_KEY" \
       "$USER@$HOST" bash -s -- "$APP_PORT" <<'REMOTE_DEPLOY'
@@ -175,49 +187,15 @@ if [[ ! -d "$app_dir/.git" ]]; then
 fi
 
 cd "$app_dir"
+cp "$HOME/.canvas-critic.env" .env
+chmod 600 .env
+set -a
+source .env
+set +a
+
 printf 'Synchronizing application dependencies...\n'
 uv sync
 source .venv/bin/activate
-
-monitor_env_file="$HOME/.canvas-critic.env"
-if [[ -e "$monitor_env_file" ]]; then
-  if [[ ! -f "$monitor_env_file" ]]; then
-    printf '%s is not a regular file\n' "$monitor_env_file" >&2
-    exit 1
-  fi
-  if [[ "$(stat -c '%u' "$monitor_env_file")" != "$(id -u)" ]]; then
-    printf '%s must be owned by the deployment user\n' "$monitor_env_file" >&2
-    exit 1
-  fi
-  if [[ "$(stat -c '%a' "$monitor_env_file")" != "600" ]]; then
-    printf '%s must have mode 600\n' "$monitor_env_file" >&2
-    exit 1
-  fi
-
-  # Parse simple NAME=value entries without executing file contents.
-  set -a
-  while IFS= read -r env_line || [[ -n "$env_line" ]]; do
-    case "$env_line" in
-      ""|\#*) continue ;;
-      [A-Za-z_][A-Za-z0-9_]*=*)
-        env_name="${env_line%%=*}"
-        env_value="${env_line#*=}"
-        if [[ "$env_value" == *'$('* || "$env_value" == *'`'* ||
-              "$env_value" == *';'* || "$env_value" == *'&&'* ||
-              "$env_value" == *'||'* ]]; then
-          printf '%s contains unsupported shell syntax\n' "$monitor_env_file" >&2
-          exit 1
-        fi
-        export "$env_name=$env_value"
-        ;;
-      *)
-        printf '%s contains an invalid environment entry\n' "$monitor_env_file" >&2
-        exit 1
-        ;;
-    esac
-  done <"$monitor_env_file"
-  set +a
-fi
 
 printf 'Starting Canvas Critic...\n'
 GRADIO_SERVER_NAME=0.0.0.0 GRADIO_SERVER_PORT="$app_port" \
