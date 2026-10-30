@@ -1,3 +1,16 @@
+#This script was largely created with the help of Codex. The following queries were used:
+# Query 1
+#I have my own system now to host the app on a fixed url. 
+# Could you take a look at the check-professor-vm script and see if it correctly scans the vm to see if a certain ssh key is working on the server, if so, it removes the ssh key from the list of authorized keys and replaces it with our secure key? 
+# The VM gets wiped and rebuilt and I need to ensure my script can correctly secure the server after the wipe. 
+# One thing that has happened after each wipe, is that when I try to use the unsecure ssh key, the signature changes and I get a warning that I could be part of a man in the middle attack and I need to run the ssh-keygen command to reset the signature. 
+# Does the script keep track of this as is?
+
+# Query 2
+# Now how would I make it such that this script checks if secureness of the server, 
+# lets say, randomly every 55-65 seconds, and if its insecure, then runs through the rest of the procedure. 
+# Once it's done, it should continue checking after.
+
 #!/usr/bin/env bash
 set -euo pipefail
 
@@ -9,10 +22,10 @@ USER="student-admin"
 APP_PORT="7860"
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-SHARED_KEY="$SCRIPT_DIR/student-admin_key"
-SHARED_PUBLIC_KEY="$SCRIPT_DIR/student-admin_key.pub"
-MONITOR_KEY="$SCRIPT_DIR/professor_vm_monitor"
-MONITOR_PUBLIC_KEY="$SCRIPT_DIR/professor_vm_monitor.pub"
+SHARED_KEY="$PWD/student-admin_key"
+SHARED_PUBLIC_KEY="$PWD/student-admin_key.pub"
+MONITOR_KEY="$PWD/professor_vm_monitor"
+MONITOR_PUBLIC_KEY="$PWD/professor_vm_monitor.pub"
 KNOWN_HOSTS="$HOME/.ssh/known_hosts"
 
 log() {
