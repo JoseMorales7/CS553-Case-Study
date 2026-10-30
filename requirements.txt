@@ -2,6 +2,8 @@ accelerate
 einops
 huggingface_hub
 pillow
+psutil
+pytest
 timm
 torch
 torchvision

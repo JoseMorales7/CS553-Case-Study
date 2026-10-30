@@ -1,6 +1,8 @@
 # Chooses which model handles a request, and what happens when one fails
 
 import logging
+from typing import Callable
+
 import gradio as gr
 from critique import Critique
 from hf_auth import resolve_token
@@ -8,6 +10,19 @@ from local_model import local_critique
 from remote_model import remote_critique
 
 logger = logging.getLogger(__name__)
+
+
+def _accepting_requests() -> bool:
+    return True
+
+
+_capacity_check = _accepting_requests
+
+
+def set_capacity_check(check: Callable[[], bool]) -> None:
+    """Install the application-owned capacity check without creating a monitor."""
+    global _capacity_check
+    _capacity_check = check
 
 
 def score_artwork(
@@ -19,6 +34,9 @@ def score_artwork(
     hf_token,
 ):
     # Return (markdown, status) for the UI
+    if not _capacity_check():
+        raise gr.Error("The server is currently near capacity. Please try again shortly.")
+
     if not image_path:
         raise gr.Error("Please upload an image before requesting a critique.")
 
