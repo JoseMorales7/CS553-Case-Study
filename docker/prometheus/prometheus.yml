@@ -1,0 +1,11 @@
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: 'gradio_app'
+    static_configs:
+      - targets: ['cs553-app:8000']  # Application metrics
+
+  - job_name: 'node_exporter_gradio'
+    static_configs:
+      - targets: ['cs553-app:9100']  # Node Exporter started by the app image

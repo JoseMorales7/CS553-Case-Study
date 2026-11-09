@@ -8,6 +8,7 @@ from critique import Critique
 from hf_auth import resolve_token
 from local_model import local_critique
 from remote_model import remote_critique
+from metrics import FAILOVERS, REJECTED_REQUESTS, RESPONSE_LENGTH, model_attempt, track_request
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +26,7 @@ def set_capacity_check(check: Callable[[], bool]) -> None:
     _capacity_check = check
 
 
+@track_request
 def score_artwork(
     image_path,
     aspect,
@@ -35,9 +37,11 @@ def score_artwork(
 ):
     # Return (markdown, status) for the UI
     if not _capacity_check():
+        REJECTED_REQUESTS.labels("overloaded").inc()
         raise gr.Error("The server is currently near capacity. Please try again shortly.")
 
     if not image_path:
+        REJECTED_REQUESTS.labels("missing_image").inc()
         raise gr.Error("Please upload an image before requesting a critique.")
 
     try:
@@ -53,20 +57,21 @@ def score_artwork(
                 "No Hugging Face token was provided. "
                 "Automatically switching to the local model."
             )
-            result = local_critique(image_path, aspect, temperature, top_p)
+            result = _run_model("local", local_critique, image_path, aspect, temperature, top_p)
             result.route = "Local (no Hugging Face token)"
             return result.to_markdown(), result.to_status()
 
         try:
-            result = remote_critique(image_path, aspect, temperature, top_p, token)
+            result = _run_model("hosted", remote_critique, image_path, aspect, temperature, top_p, token)
             return result.to_markdown(), result.to_status()
         except Exception:
+            FAILOVERS.labels("hosted", "local").inc()
             logger.warning("Hosted model failed, failing over to local", exc_info=True)
             gr.Warning(
                 "The hosted model is unavailable. "
                 "Automatically switching to the local model."
             )
-            result = local_critique(image_path, aspect, temperature, top_p)
+            result = _run_model("local", local_critique, image_path, aspect, temperature, top_p)
             result.route = "Failover (hosted unavailable)"
             return result.to_markdown(), result.to_status()
 
@@ -76,19 +81,27 @@ def score_artwork(
         raise gr.Error(f"The model could not score this image: {error}") from error
 
 
+def _run_model(model, function, *args):
+    with model_attempt(model):
+        result = function(*args)
+        RESPONSE_LENGTH.labels(model).observe(len(result.to_markdown()))
+        return result
+
+
 def _local_with_fallback(image_path, aspect, temperature, top_p, hf_token) -> Critique:
     # fall back to the remote model if local model ran out of GPU quota or failed
     try:
-        return local_critique(image_path, aspect,temperature, top_p)
+        return _run_model("local", local_critique, image_path, aspect, temperature, top_p)
     except Exception:
         token = resolve_token(hf_token)
         if not token:
             raise
+        FAILOVERS.labels("local", "hosted").inc()
         logger.warning("Local model failed, falling back to hosted", exc_info=True)
         gr.Warning(
             "The local model is unavailable (GPU quota may be exhausted). "
             "Falling back to the hosted model."
         )
-        result = remote_critique(image_path, aspect, temperature, top_p, token)
+        result = _run_model("hosted", remote_critique, image_path, aspect, temperature, top_p, token)
         result.route = "Failover (local unavailable)"
         return result

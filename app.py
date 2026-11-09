@@ -6,6 +6,7 @@ if __name__ == "__main__":
     print("Starting Canvas Critic: importing Gradio...", flush=True)
 
 import gradio as gr
+from prometheus_client import start_http_server
 from config import LOCAL_MODEL, REMOTE_MODEL, ASPECTS
 import router
 from gradio.themes import Soft
@@ -162,6 +163,8 @@ with gr.Blocks(title="Canvas Critic") as demo:
 # Resource monitoring and application launch
 # Written by GPT5.6-Luna
 if __name__ == "__main__":
+    # Expose Prometheus metrics separately from the Gradio web interface.
+    start_http_server(8000, addr="0.0.0.0")
     try:
         notifier = DiscordNotifier()
 
@@ -176,7 +179,7 @@ if __name__ == "__main__":
             ).start()
 
         resource_monitor = ResourceMonitor(on_transition=notify_transition)
-        router.set_capacity_check(resource_monitor.is_overloaded)
+        router.set_capacity_check(lambda: not resource_monitor.is_overloaded())
         resource_monitor.start()
     except ResourceMonitorUnavailable as error:
         logging.critical("Resource monitoring is unavailable: %s", error)

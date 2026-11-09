@@ -19,7 +19,7 @@ python app.py
 ```
 
 Open `http://localhost:7860` on the host computer. Other people on the same
-network can use `http://<host-ip-address>:8000`. The operating-system firewall
+network can use `http://<host-ip-address>:7860`. The operating-system firewall
 must allow inbound TCP traffic on port 7860.
 Open `http://paffenroth-23.dyn.wpi.edu:8006` to access the app.
 
@@ -62,3 +62,14 @@ Resource monitoring and overload behavior are documented in
 [MONITORING.md](MONITORING.md). The monitor requires `psutil`; Discord alerts
 are optional for availability and use the protected `DISCORD_WEBHOOK_URL`
 deployment variable when configured.
+
+<!-- This file was modified with GPT6.1 sol in response to the following query
+
+Could you modify the project such that a prometheus web server is started at port 8000, and captures relevant metrics for the application? 
+The metrics included in the attached file should also appear in this project, along with additional relevant metrics. 
+The way in which the web_server is started should also be similar. -->
+
+The app also starts a Prometheus-compatible metrics HTTP server on
+`0.0.0.0:8000`; view `http://localhost:8000/metrics`. This is separate from the
+Gradio interface on port 7860. See [MONITORING.md](MONITORING.md) for metrics
+and Docker scrape configuration.

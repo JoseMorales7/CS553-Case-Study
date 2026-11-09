@@ -10,6 +10,14 @@ import time
 from dataclasses import dataclass
 from typing import Callable, Optional
 
+from metrics import (
+    CPU_PERCENT,
+    LAST_SAMPLE,
+    MEMORY_PERCENT,
+    OVERLOADED as OVERLOADED_METRIC,
+    SAMPLE_ERRORS,
+)
+
 try:
     import psutil
 except ImportError:  # Keep import-time errors actionable in app startup.
@@ -140,6 +148,7 @@ class ResourceMonitor:
                 cpu_percent, memory_percent = self._sampler()
                 self.update(cpu_percent, memory_percent)
             except Exception:
+                SAMPLE_ERRORS.inc()
                 logger.exception("Resource monitoring sample failed")
             self._stop_event.wait(self.config.interval_seconds)
 
@@ -174,6 +183,11 @@ class ResourceMonitor:
                     self._state = NORMAL
                     self._consecutive_recovery = 0
                     transition = NORMAL
+
+            CPU_PERCENT.set(cpu_percent)
+            MEMORY_PERCENT.set(memory_percent)
+            OVERLOADED_METRIC.set(self._state == OVERLOADED)
+            LAST_SAMPLE.set(time.time())
 
         if transition is not None:
             logger.info(

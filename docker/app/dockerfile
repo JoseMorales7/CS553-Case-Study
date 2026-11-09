@@ -1,0 +1,28 @@
+FROM ubuntu:24.04
+
+# Install packages that we need. vim is for helping with debugging
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && \
+    apt-get upgrade -yq ca-certificates && \
+    apt-get install -yq --no-install-recommends \
+    prometheus-node-exporter \
+    git \
+    nano
+
+COPY --from=ghcr.io/astral-sh/uv:latest \
+    /uv /uvx /usr/local/bin/
+
+WORKDIR /opt/app
+COPY . .
+RUN git clone -b server https://github.com/JoseMorales7/CS553-Case-Study.git 
+
+WORKDIR /opt/app/CS553-Case-Study
+RUN uv python install 3.11
+RUN uv sync --python 3.11
+
+EXPOSE 7860
+EXPOSE 8000
+EXPOSE 9100
+ENV GRADIO_SERVER_NAME="0.0.0.0"
+
+CMD bash -c "prometheus-node-exporter --web.listen-address=':9100' & exec uv run --no-sync python /opt/app/app.py"

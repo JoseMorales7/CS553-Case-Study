@@ -3,6 +3,7 @@ einops
 huggingface_hub
 pillow
 psutil
+prometheus-client>=0.20.0
 pytest
 timm
 torch

@@ -10,6 +10,7 @@ from PIL import Image, ImageOps
 
 from config import LOCAL_MODEL, LOCAL_SCORE_QUESTION, advice_question, LOCAL_MAX_TOKENS
 from critique import Critique
+from metrics import generation_attempt
 
 logger = logging.getLogger(__name__)
 
@@ -112,15 +113,17 @@ def local_critique(image_path, aspect, temperature, top_p) -> Critique:
 
     with _model_lock:
         model, processor = _ensure_loaded()
-        raw_score = _generate(model, processor, image, LOCAL_SCORE_QUESTION, 16)
+        with generation_attempt("local", "score"): #Modified by Codex in response to: Add metrics for response length and response generation time?
+            raw_score = _generate(model, processor, image, LOCAL_SCORE_QUESTION, 16)
         score = parse_local_score(raw_score)
         if score is None:
             raise RuntimeError(f"SmolVLM returned an invalid score: {raw_score!r}")
 
-        evaluation = _generate(
-            model, processor, image, advice_question(aspect), LOCAL_MAX_TOKENS,
-            temperature, top_p,
-        )
+        with generation_attempt("local", "advice"): #Modified by Codex in response to: Add metrics for response length and response generation time?
+            evaluation = _generate(
+                model, processor, image, advice_question(aspect), LOCAL_MAX_TOKENS,
+                temperature, top_p,
+            )
         if not evaluation:
             raise RuntimeError("SmolVLM returned no improvement suggestions.")
 

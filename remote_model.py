@@ -7,6 +7,7 @@ from huggingface_hub import InferenceClient
 
 from config import EVALUATION_HEADING, REMOTE_MODEL, REMOTE_PROVIDER, remote_prompt, REMOTE_MAX_TOKENS
 from critique import Critique
+from metrics import generation_attempt
 
 SCORE_PATTERN = re.compile(r"##\s*Score:\s*(\d+)\s*/\s*100")
 HEADING_PATTERN = re.compile(rf"###\s*{re.escape(EVALUATION_HEADING)}\s*", re.IGNORECASE)
@@ -46,21 +47,23 @@ def parse_response(text: str) -> tuple[int | None, str]:
 
 def remote_critique(image_path, aspect, temperature, top_p, hf_token) -> Critique:
     client = InferenceClient(provider=REMOTE_PROVIDER, token=hf_token)
-    response = client.chat.completions.create(
-        model=REMOTE_MODEL,
-        messages=[
-            {
-                "role": "user",
-                "content": [
-                    {"type": "image_url", "image_url": {"url": image_as_data_url(image_path)}},
-                    {"type": "text", "text": remote_prompt(aspect)},
-                ],
-            }
-        ],
-        max_tokens=REMOTE_MAX_TOKENS,
-        temperature=temperature,
-        top_p=top_p,
-    )
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "image_url", "image_url": {"url": image_as_data_url(image_path)}},
+                {"type": "text", "text": remote_prompt(aspect)},
+            ],
+        }
+    ]
+    with generation_attempt("hosted", "critique"):
+        response = client.chat.completions.create(
+            model=REMOTE_MODEL,
+            messages=messages,
+            max_tokens=REMOTE_MAX_TOKENS,
+            temperature=temperature,
+            top_p=top_p,
+        )
 
     choice = response.choices[0]
     content = (choice.message.content or "").strip()

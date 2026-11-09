@@ -70,3 +70,90 @@ deployed app because configuration is read when the process starts.
 This feature does not provide GPU monitoring, host-wide metrics, a metrics
 database, a dashboard, model unloading, model swapping, workload reduction,
 or multi-process shared monitoring state.
+
+<!-- This file was creating with GPT6.1 sol in response to the following query
+
+Could you modify the project such that a prometheus web server is started at port 8000, and captures relevant metrics for the application? 
+The metrics included in the attached file should also appear in this project, along with additional relevant metrics. 
+The way in which the web_server is started should also be similar. -->
+
+## Prometheus metrics
+
+Running `python app.py` calls `prometheus_client.start_http_server(8000)` in
+the main block before resource monitoring and Gradio launch, matching the
+reference application's startup pattern. It binds to `0.0.0.0` so a scraper
+in another container can access `http://cs553-app:8000/metrics`. Importing
+the app or router does not start a metrics listener. A port conflict fails
+startup rather than leaving metrics silently unavailable.
+
+This is a metrics exporter, not the Prometheus storage/query server. Configure
+a separate Prometheus instance to scrape it, for example:
+
+```yaml
+scrape_configs:
+  - job_name: canvas-critic
+    scrape_interval: 15s
+    static_configs:
+      - targets: ["cs553-app:8000"]
+```
+
+For Docker, put Prometheus and the app on the same Compose network. A published
+host port is unnecessary for container-to-container scraping. Publish
+`127.0.0.1:8000:8000` if you also want to inspect metrics from the Docker host.
+Keep ngrok directed at the Gradio port, 7860.
+
+| Metric | Meaning |
+| --- | --- |
+| `app_requests_total` | Scoring callbacks started, including rejected requests |
+| `app_successful_requests_total` | Scoring callbacks that returned a critique, including successful failovers |
+| `app_failed_requests_total` | Scoring callbacks that raised an error, including validation and capacity rejections |
+| `app_request_duration_seconds` | Summary with count and sum of callback durations, including failed requests |
+| `app_requests_in_progress` | Executing callbacks; excludes requests waiting in Gradio's queue |
+| `app_rejected_requests_total{reason}` | Rejections for `overloaded` or `missing_image` |
+| `app_model_attempts_total{model,outcome}` | Attempts for `local`/`hosted`, with `success`/`failure` outcomes |
+| `app_model_duration_seconds{model}` | Histogram of each model attempt's latency, including failed attempts and lazy loading |
+| `app_response_length_characters{model}` | Histogram of successful critique Markdown lengths in Unicode characters, including score and headings; excludes status text |
+| `app_response_generation_duration_seconds{model,stage,outcome}` | Histogram of generation-call wall time; local stages are `score` and `advice`, hosted stage is `critique`, outcomes are `success` and `failure` |
+| `app_model_failovers_total{source,destination}` | Fallback attempts after an inference failure |
+| `app_resource_cpu_percent` | Last CPU percentage sampled by the resource monitor |
+| `app_resource_memory_percent` | Last system memory percentage sampled by the resource monitor |
+| `app_resource_overloaded` | 1 when the monitor reports overload, otherwise 0 |
+| `app_resource_last_sample_timestamp_seconds` | Unix timestamp of the last successful resource sample; 0 before the first sample |
+| `app_resource_sample_errors_total` | Failed sampling iterations |
+
+The first four names and types match the reference file. A request with a failed
+primary model and a successful fallback counts as one successful request, two
+model attempts, and one failover. Selecting local inference because no token was
+provided is not a failure or failover. Upload, clear, and metrics HTTP requests
+are not scoring requests. Request latency starts when the callback executes,
+not when the user enters Gradio's queue. The summary provides averages; the
+model histogram provides buckets for latency percentile queries.
+
+Response length is measured once per successful model attempt, including a
+successful fallback; errors and rejected requests do not contribute lengths.
+Characters are not tokens or bytes. Generation timing excludes model loading,
+waiting for the local model lock, and image-file preparation. Local timing wraps
+each `_generate` call, including processor preparation and decoding. Hosted
+timing wraps the API call, including network/provider waiting time; it cannot
+isolate the provider's compute time. A generation call that returns invalid or
+empty output has a `success` timing outcome (the call returned), while model
+attempt metrics still record the subsequent validation failure. These metrics
+are not time-to-first-token measurements because responses are not streamed.
+
+For example, average response length and generation latency over five minutes:
+
+```promql
+sum by (model) (rate(app_response_length_characters_sum[5m]))
+  / sum by (model) (rate(app_response_length_characters_count[5m]))
+
+sum by (model, stage) (rate(app_response_generation_duration_seconds_sum{outcome="success"}[5m]))
+  / sum by (model, stage) (rate(app_response_generation_duration_seconds_count{outcome="success"}[5m]))
+```
+
+Resource metrics use the existing psutil samples; in containers these reflect
+what psutil can see and are not guaranteed to represent container CPU/memory
+limits. Use container infrastructure metrics for those limits. Check the last
+sample timestamp for stale data if monitoring fails. The Python client's default
+runtime collectors are also enabled (process metrics depend on the platform).
+Metrics reset on process restart and assume one application process. Labels
+never include tokens, file paths, image contents, or exception messages.
