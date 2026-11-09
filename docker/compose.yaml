@@ -14,7 +14,7 @@ services:
       GRADIO_SERVER_NAME: 0.0.0.0
       GRADIO_SERVER_PORT: "7860"
     ports:
-      - "7860:7860"
+      - "2501:7860"
 
   prometheus:
     container_name: group6_prometheus
@@ -31,7 +31,7 @@ services:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus-data:/prometheus
     ports:
-      - "127.0.0.1:9090:9090"
+      - "127.0.0.1:2502:9090"
 
   grafana:
     container_name: group6_grafana
@@ -49,7 +49,7 @@ services:
       - grafana-data:/var/lib/grafana
       - ./grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
     ports:
-      - "3000:3000"
+      - "2503:3000"
 
   ngrok:
     container_name: group6_ngrok
